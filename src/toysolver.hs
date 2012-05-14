@@ -179,7 +179,8 @@ run solver opt lp = do
       MIPSolver2.setLogger mip logger
       MIPSolver2.setNThread mip nthreads
       let update m val = do
-            putStrLn $ "o " ++ showValue val
+            s <- MIPSolver2.showValue mip val
+            putStrLn $ "o " ++ s
       ret <- MIPSolver2.optimize mip update
       case ret of
         Simplex2.Unsat -> do

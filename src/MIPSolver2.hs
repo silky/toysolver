@@ -39,6 +39,9 @@ module MIPSolver2
   , setNThread
   , setLogger
   , setShowRational
+
+  -- * Misc
+  , showValue
   ) where
 
 import Prelude hiding (log)
@@ -66,6 +69,7 @@ import qualified Simplex2
 import Simplex2 (OptResult (..), Var, Model)
 import qualified OmegaTest
 import Linear
+import Delta
 import Util (isInteger, fracPart)
 
 data Solver
@@ -83,7 +87,7 @@ data Node =
   Node
   { ndLP    :: Simplex2.Solver
   , ndDepth :: {-# UNPACK #-} !Int
-  , ndValue :: Rational
+  , ndValue :: Simplex2.Value
   }
 
 newSolver :: Simplex2.Solver -> IS.IntSet -> IO Solver
@@ -93,13 +97,13 @@ newSolver lp ivs = do
   forM_ (IS.toList ivs) $ \v -> do
     lb <- Simplex2.getLB lp2 v
     case lb of
-      Just l | not (isInteger l) ->
-        Simplex2.assertLower lp2 v (fromInteger (ceiling l))
+      Just l | not (isInteger' l) ->
+        Simplex2.assertAtom lp2 (LA.varExpr v .>=. LA.constExpr (fromInteger (ceiling' l)))
       _ -> return ()
     ub <- Simplex2.getUB lp2 v
     case ub of
-      Just u | not (isInteger u) ->
-        Simplex2.assertLower lp2 v (fromInteger (floor u))
+      Just u | not (isInteger' u) ->
+        Simplex2.assertAtom lp2 (LA.varExpr v .<=. LA.constExpr (fromInteger (floor' u)))
       _ -> return ()
 
   bestRef <- newTVarIO Nothing
@@ -119,7 +123,7 @@ newSolver lp ivs = do
     , mipShowRational = showRef
     }
 
-optimize :: Solver -> (Model -> Rational -> IO ()) -> IO OptResult
+optimize :: Solver -> (Model -> Simplex2.Value -> IO ()) -> IO OptResult
 optimize solver update = do
   let lp = mipRootLP solver
   log solver "MIP: Solving LP relaxation..."
@@ -147,6 +151,8 @@ optimize solver update = do
                 original problem is unbounded or unsatisfiable
                 when LP relaxation is unbounded.
             -}
+            undefined
+{-
             log solver "MIP: falling back to Fourier-Motzkin + OmegaTest"
             t <- Simplex2.getTableau lp
             let ds = [LA.varExpr v .==. def | (v, def) <- IM.toList t]
@@ -159,6 +165,7 @@ optimize solver update = do
             case OmegaTest.solveQFLA (bs ++ ds) ivs of
               Just _ -> return Unbounded
               Nothing -> return Unsat  
+-}
       Optimum -> do
         s0 <- showValue solver =<< Simplex2.getObjValue lp
         log solver $ "MIP: LP relaxation optimum is " ++ s0
@@ -170,7 +177,7 @@ optimize solver update = do
           Nothing -> return Unsat
           Just _ -> return Optimum
 
-branchAndBound :: Solver -> (Model -> Rational -> IO ()) -> IO ()
+branchAndBound :: Solver -> (Model -> Simplex2.Value -> IO ()) -> IO ()
 branchAndBound solver update = do
   dir <- Simplex2.getOptDir (mipRootLP solver)
   rootVal <- Simplex2.getObjValue (mipRootLP solver)
@@ -238,11 +245,11 @@ branchAndBound solver update = do
                   case r of
                     Nothing -> do -- branch
                       let (v0,val0) = fst $ maximumBy (comparing snd)
-                                      [((v,val), abs (fromInteger (round val) - val)) | (v,val) <- xs]
+                                      [((v,val), abs (fromInteger (round val') - val')) | (v,val@(Delta val' _)) <- xs]
                       let lp1 = lp
                       lp2 <- Simplex2.cloneSolver lp
-                      Simplex2.assertAtom lp1 (LA.varExpr v0 .<=. LA.constExpr (fromInteger (floor val0)))
-                      Simplex2.assertAtom lp2 (LA.varExpr v0 .>=. LA.constExpr (fromInteger (ceiling val0)))
+                      Simplex2.assertAtom lp1 (LA.varExpr v0 .<=. LA.constExpr (fromInteger (floor' val0)))
+                      Simplex2.assertAtom lp2 (LA.varExpr v0 .>=. LA.constExpr (fromInteger (ceiling' val0)))
                       atomically $ do
                         addNode $ Node lp1 (ndDepth node + 1) val
                         addNode $ Node lp2 (ndDepth node + 1) val
@@ -310,9 +317,10 @@ branchAndBound solver update = do
                      Nothing -> return ("not yet found", "--")
                      Just val -> do
                        p <- showValue solver val
-                       let g = if val == 0
+                       -- XXX
+                       let g = if realPart val == 0
                                then "inf"
-                               else printf "%.2f%%" (fromRational (abs (dualBound - val) * 100 / abs val) :: Double)
+                               else printf "%.2f%%" (fromRational (abs (realPart dualBound - realPart val) * 100 / abs (realPart val)) :: Double)
                        return (p, g)
               d <- showValue solver dualBound
  
@@ -348,20 +356,20 @@ model solver = do
     Nothing -> error "no model"
     Just node -> Simplex2.model (ndLP node)
 
-getObjValue :: Solver -> IO Rational
+getObjValue :: Solver -> IO Simplex2.Value
 getObjValue solver = do
   m <- readTVarIO (mipBest solver)
   case m of
     Nothing -> error "no model"
     Just node -> return $ ndValue node
 
-violated :: Node -> IS.IntSet -> IO [(Var, Rational)]
+violated :: Node -> IS.IntSet -> IO [(Var, Simplex2.Value)]
 violated node ivs = do
-  m <- Simplex2.model (ndLP node)
-  let p (v,val) = v `IS.member` ivs && not (isInteger val)
+  m <- Simplex2.rawModel (ndLP node)
+  let p (v,val) = v `IS.member` ivs && not (isInteger' val)
   return $ filter p (IM.toList m)
 
-prune :: Solver -> Rational -> IO Bool
+prune :: Solver -> Simplex2.Value -> IO Bool
 prune solver lb = do
   b <- readTVarIO (mipBest solver)
   case b of
@@ -370,7 +378,7 @@ prune solver lb = do
       dir <- Simplex2.getOptDir (mipRootLP solver)
       return $ if dir==OptMin then ndValue node <= lb else ndValue node >= lb
 
-showValue :: Solver -> Rational -> IO String
+showValue :: Solver -> Simplex2.Value -> IO String
 showValue solver v = do
   printRat <- readIORef (mipShowRational solver)
   return $ Simplex2.showValue printRat v
@@ -406,7 +414,7 @@ logIO solver action = do
 
 deriveGomoryCut :: Simplex2.Solver -> IS.IntSet -> Var -> IO (LA.Atom Rational)
 deriveGomoryCut lp ivs xi = do
-  v0 <- Simplex2.getValue lp xi
+  Delta v0 0 <- Simplex2.getValue lp xi
   let f0 = fracPart v0
   assert (0 < f0 && f0 < 1) $ return ()
 
@@ -432,14 +440,14 @@ deriveGomoryCut lp ivs xi = do
 
   xs1 <- forM js $ \(aij, xj) -> do
     let fj = fracPart aij
-    Just lj <- Simplex2.getLB lp xj
+    Just (Delta lj 0) <- Simplex2.getLB lp xj
     let c = if xj `IS.member` ivs
             then (if fj <= 1 - f0 then fj  / (1 - f0) else ((1 - fj) / f0))
             else (if aij > 0      then aij / (1 - f0) else (-aij     / f0))
     return $ c .*. (LA.varExpr xj .-. LA.constExpr lj)
   xs2 <- forM ks $ \(aij, xj) -> do
     let fj = fracPart aij
-    Just uj <- Simplex2.getUB lp xj
+    Just (Delta uj 0) <- Simplex2.getUB lp xj
     let c = if xj `IS.member` ivs
             then (if fj <= f0 then fj  / f0 else ((1 - fj) / (1 - f0)))
             else (if aij > 0  then aij / f0 else (-aij     / (1 - f0)))
@@ -455,7 +463,7 @@ canDeriveGomoryCut lp xi = do
     then return False
     else do
       val <- Simplex2.getValue lp xi
-      if isInteger val
+      if isInteger' val
         then return False
         else do
           row <- Simplex2.getRow lp xi

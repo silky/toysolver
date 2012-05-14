@@ -3,6 +3,7 @@ module Main (main) where
 
 import Control.Monad
 import Data.List
+import qualified Data.IntMap as IM
 import Test.HUnit hiding (Test)
 import Test.Framework (Test, defaultMain, testGroup)
 import Test.Framework.TH
@@ -13,6 +14,7 @@ import Simplex2
 import qualified LA as LA
 -- import qualified Formula as F
 -- import Linear
+import Delta
 
 case_test1 :: IO ()
 case_test1 = do
@@ -30,9 +32,10 @@ case_test1 = do
   ret <- check solver
   ret @?= True
 
-  vx <- getValue solver x
-  vy <- getValue solver y
-  vz <- getValue solver z
+  m <- model solver
+  let vx = m IM.! x
+  let vy = m IM.! y
+  let vz = m IM.! z
   7*vx + 12*vy + 31*vz @?= 17
   3*vx + 5*vy + 14*vz @?= 7
   assertBool (printf "vx should be >=1 but %s"   (show vx)) $ vx >= 1
@@ -53,8 +56,9 @@ case_test2 = do
   ret <- check solver
   ret @?= True
 
-  vx <- getValue solver x
-  vy <- getValue solver y
+  m <- model solver
+  let vx = m IM.! x
+  let vy = m IM.! y
   let v1 = 11*vx + 13*vy
       v2 = 7*vx - 9*vy
   assertBool (printf "11*vx + 13*vy should be >=27 but %s" (show v1)) $ 27 <= v1
@@ -124,9 +128,9 @@ case_test6 = do
   x2 <- newVar solver
   x3 <- newVar solver
 
-  assertLower solver x1 0
-  assertLower solver x2 0
-  assertLower solver x3 0
+  assertLower solver x1 (fromReal 0)
+  assertLower solver x2 (fromReal 0)
+  assertLower solver x3 (fromReal 0)
   assertAtom solver (LA.fromTerms [(1,x1),(2,x2),(3,x3)] .>=. LA.constExpr 5)
   assertAtom solver (LA.fromTerms [(2,x1),(2,x2),(1,x3)] .>=. LA.constExpr 6)
 
@@ -139,7 +143,7 @@ case_test6 = do
   ret @?= Optimum
 
   val <- getObjValue solver
-  val @?= 11
+  val @?= fromReal 11
 
 {-
 http://www.math.cuhk.edu.hk/~wei/lpch5.pdf
@@ -161,9 +165,9 @@ case_test7 = do
   x2 <- newVar solver
   x3 <- newVar solver
 
-  assertLower solver x1 0
-  assertLower solver x2 0
-  assertLower solver x3 0
+  assertLower solver x1 (fromReal 0)
+  assertLower solver x2 (fromReal 0)
+  assertLower solver x3 (fromReal 0)
   assertAtom solver (LA.fromTerms [(-1,x1),(-2,x2),(-3,x3)] .<=. LA.constExpr (-5))
   assertAtom solver (LA.fromTerms [(-2,x1),(-2,x2),(-1,x3)] .<=. LA.constExpr (-6))
 
@@ -176,7 +180,7 @@ case_test7 = do
   ret @?= Optimum
 
   val <- getObjValue solver
-  val @?= -11
+  val @?= fromReal (-11)
 
 case_AssertAtom :: IO ()
 case_AssertAtom = do
@@ -184,25 +188,25 @@ case_AssertAtom = do
   x0 <- newVar solver
   assertAtom solver (LA.constExpr 1 .<=. LA.varExpr x0)
   ret <- getLB solver x0
-  ret @?= Just 1
+  ret @?= Just (fromReal 1)
 
   solver <- newSolver
   x0 <- newVar solver
   assertAtom solver (LA.varExpr x0 .>=. LA.constExpr 1)
   ret <- getLB solver x0
-  ret @?= Just 1
+  ret @?= Just (fromReal 1)
 
   solver <- newSolver
   x0 <- newVar solver
   assertAtom solver (LA.constExpr 1 .>=. LA.varExpr x0)
   ret <- getUB solver x0
-  ret @?= Just 1
+  ret @?= Just (fromReal 1)
 
   solver <- newSolver
   x0 <- newVar solver
   assertAtom solver (LA.varExpr x0 .<=. LA.constExpr 1)
   ret <- getUB solver x0
-  ret @?= Just 1
+  ret @?= Just (fromReal 1)
 
 ------------------------------------------------------------------------
 -- Test harness

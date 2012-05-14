@@ -110,17 +110,17 @@ import Util (showRational)
   Value
 --------------------------------------------------------------------}
 
-{-
 type Value = Delta Rational
 
 toValue :: Rational -> Value
 toValue = fromReal
--}
 
+{-
 type Value = Rational
 
 toValue :: Rational -> Value
 toValue = id
+-}
 
 {--------------------------------------------------------------------
   The @Solver@ type
@@ -246,10 +246,8 @@ assertAtom solver (LA.Atom lhs op rhs) = do
   case op of
     F.Le  -> assertUpper solver v (toValue rhs')
     F.Ge  -> assertLower solver v (toValue rhs')
-{-
     F.Lt  -> assertUpper solver v (toValue rhs' .-. delta)
     F.Gt  -> assertLower solver v (toValue rhs' .+. delta)
--}
     F.Eql -> do
       assertLower solver v (toValue rhs')
       assertUpper solver v (toValue rhs')
@@ -664,7 +662,6 @@ getObjValue solver = getValue solver objVar
 
 type Model = IM.IntMap Rational
 
-{-
 model :: Solver -> IO Model
 model solver = do
   xs <- variables solver
@@ -680,10 +677,11 @@ model solver = do
       f :: Value -> Rational
       f (Delta r k) = r + k * delta0
   liftM (IM.map f) $ readIORef (svModel solver)
--}
 
+{-
 model :: Solver -> IO Model
 model = rawModel
+-}
   
 {--------------------------------------------------------------------
   major function
@@ -822,9 +820,9 @@ recordTime solver act = do
   (log solver . printf "#pivot = %d") =<< readIORef (svNPivot solver)
   return result
 
-showValue :: Bool -> Rational -> String
-showValue = showRational
--- showValue = showDelta
+showValue :: Bool -> Value -> String
+-- showValue = showRational
+showValue = showDelta
 
 showDelta :: Bool -> Delta Rational -> String
 showDelta asRatio v = 
