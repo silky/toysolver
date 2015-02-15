@@ -71,6 +71,7 @@ import qualified ToySolver.SAT.MUS.CAMUS as CAMUS
 import qualified ToySolver.SAT.MUS.DAA as DAA
 import ToySolver.SAT.Printer
 import qualified ToySolver.Text.PBFile as PBFile
+import qualified ToySolver.Text.PBFile.Attoparsec as PBFile2
 import qualified ToySolver.Text.LPFile as LPFile
 import qualified ToySolver.Text.MPSFile as MPSFile
 import qualified ToySolver.Text.MaxSAT as MaxSAT
@@ -574,11 +575,11 @@ solveMUS opt solver gcnf = do
 mainPB :: Options -> SAT.Solver -> [String] -> IO ()
 mainPB opt solver args = do
   ret <- case args of
-           ["-"]   -> fmap (PBFile.parseOPBString "-") $ hGetContents stdin
-           [fname] -> PBFile.parseOPBFile fname
+           ["-"]   -> fmap PBFile.parseOPBByteString $ BS.hGetContents stdin
+           [fname] -> PBFile2.parseOPBFile fname
            _ -> showHelp stderr >> exitFailure
   case ret of
-    Left err -> hPrint stderr err >> exitFailure
+    Left err -> hPutStrLn stderr err >> exitFailure
     Right formula -> solvePB opt solver formula Nothing
 
 solvePB :: Options -> SAT.Solver -> PBFile.Formula -> Maybe SAT.Model -> IO ()
@@ -671,11 +672,11 @@ setupOptimizer pbo opt = do
 mainWBO :: Options -> SAT.Solver -> [String] -> IO ()
 mainWBO opt solver args = do
   ret <- case args of
-           ["-"]   -> fmap (PBFile.parseWBOString "-") $ hGetContents stdin
-           [fname] -> PBFile.parseWBOFile fname
+           ["-"]   -> fmap PBFile.parseWBOByteString $ BS.hGetContents stdin
+           [fname] -> PBFile2.parseWBOFile fname
            _ -> showHelp stderr >> exitFailure
   case ret of
-    Left err -> hPrint stderr err >> exitFailure
+    Left err -> hPutStrLn stderr err >> exitFailure
     Right formula -> solveWBO opt solver False formula Nothing
 
 solveWBO :: Options -> SAT.Solver -> Bool -> PBFile.SoftFormula -> Maybe SAT.Model -> IO ()
