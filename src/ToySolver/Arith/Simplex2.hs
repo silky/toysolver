@@ -129,6 +129,7 @@ data GenericSolver v
   , svLB      :: !(IORef (IntMap v))
   , svUB      :: !(IORef (IntMap v))
   , svModel   :: !(IORef (IntMap v))
+  , svExplanation :: !(IORef [(Var, RelOp, v)])
   , svVCnt    :: !(IORef Int)
   , svOk      :: !(IORef Bool)
   , svOptDir  :: !(IORef OptDir)
@@ -154,6 +155,7 @@ newSolver = do
   l <- newIORef IntMap.empty
   u <- newIORef IntMap.empty
   m <- newIORef (IntMap.singleton objVar zeroV)
+  e <- newIORef []
   v <- newIORef 0
   ok <- newIORef True
   dir <- newIORef OptMin
@@ -168,6 +170,7 @@ newSolver = do
     , svLB      = l
     , svUB      = u
     , svModel   = m
+    , svExplanation = e
     , svVCnt    = v
     , svOk      = ok
     , svOptDir  = dir
@@ -184,6 +187,7 @@ cloneSolver solver = do
   l      <- newIORef =<< readIORef (svLB solver)
   u      <- newIORef =<< readIORef (svUB solver)
   m      <- newIORef =<< readIORef (svModel solver)
+  e      <- newIORef =<< readIORef (svExplanation solver)
   v      <- newIORef =<< readIORef (svVCnt solver)
   ok     <- newIORef =<< readIORef (svOk solver)
   dir    <- newIORef =<< readIORef (svOptDir solver)
@@ -198,6 +202,7 @@ cloneSolver solver = do
     , svLB      = l
     , svUB      = u
     , svModel   = m
+    , svExplanation = e
     , svVCnt    = v
     , svOk      = ok
     , svOptDir  = dir
@@ -394,7 +399,9 @@ assertLower solver x l = do
   u0 <- getUB solver x
   case (l0,u0) of 
     (Just l0', _) | l <= l0' -> return ()
-    (_, Just u0') | u0' < l -> markBad solver
+    (_, Just u0') | u0' < l -> do
+      writeIORef (svExplanation solver) [(x,Ge,l), (x,Le,u0')]
+      markBad solver
     _ -> do
       bpSaveLB solver x
       modifyIORef (svLB solver) (IntMap.insert x l)
@@ -409,7 +416,9 @@ assertUpper solver x u = do
   u0 <- getUB solver x
   case (l0,u0) of 
     (_, Just u0') | u0' <= u -> return ()
-    (Just l0', _) | u < l0' -> markBad solver
+    (Just l0', _) | u < l0' -> do
+      writeIORef (svExplanation solver) [(x,Ge,l0'), (x,Le,u)]
+      markBad solver
     _ -> do
       bpSaveUB solver x
       modifyIORef (svUB solver) (IntMap.insert x u)
@@ -497,7 +506,26 @@ check solver = do
           xi_def <- getRow solver xi
           r <- liftM (fmap snd) $ findM q (LA.terms xi_def)              
           case r of
-            Nothing -> markBad solver >> return False
+            Nothing -> do
+              let c = if isLBViolated then (xi, Ge, fromJust li) else (xi, Le, fromJust ui)
+              core <- liftM ((c :) . concat) $ forM (LA.terms xi_def) $ \(aij, xj) -> do
+                if isLBViolated then do
+                  if aij > 0 then do
+                    uj <- getUB solver xj
+                    return [(xj, Le, u) | u <- maybeToList uj]
+                  else do
+                    lj <- getLB solver xj
+                    return [(xj, Ge, l) | l <- maybeToList lj]
+                else do
+                  if aij > 0 then do
+                    lj <- getLB solver xj
+                    return [(xj, Ge, l) | l <- maybeToList lj]
+                  else do
+                    uj <- getUB solver xj
+                    return [(xj, Le, u) | u <- maybeToList uj]
+              writeIORef (svExplanation solver) core
+              markBad solver
+              return False
             Just xj -> do
               pivotAndUpdate solver xi xj (fromJust (if isLBViolated then li else ui))
               loop
@@ -716,7 +744,27 @@ dualSimplex solver opt = do
                 return $ not (testLB li vi)
               r <- dualRTest solver xi_def isLBViolated
               case r of
-                Nothing -> markBad solver >> return Unsat -- dual unbounded
+                Nothing -> do
+                  -- dual unbounded
+                  let c = if isLBViolated then (xi, Ge, fromJust li) else (xi, Le, fromJust ui)
+                  core <- liftM ((c :) . concat) $ forM (LA.terms xi_def) $ \(aij, xj) -> do
+                    if isLBViolated then do
+                      if aij > 0 then do
+                        uj <- getUB solver xj
+                        return [(xj, Le, u) | u <- maybeToList uj]
+                      else do
+                        lj <- getLB solver xj
+                        return [(xj, Ge, l) | l <- maybeToList lj]
+                    else do
+                      if aij > 0 then do
+                        lj <- getLB solver xj
+                        return [(xj, Ge, l) | l <- maybeToList lj]
+                      else do
+                        uj <- getUB solver xj
+                        return [(xj, Le, u) | u <- maybeToList uj]
+                  writeIORef (svExplanation solver) core
+                  markBad solver
+                  return Unsat
                 Just xj -> do
                   pivotAndUpdate solver xi xj (fromJust (if isLBViolated then li else ui))
                   loop
@@ -789,6 +837,9 @@ getObjValue :: GenericSolver v -> IO v
 getObjValue solver = getValue solver objVar  
 
 type Model = IntMap Rational
+
+explain :: GenericSolver v -> IO [(Var, RelOp, v)]
+explain solver = readIORef (svExplanation solver)
   
 {--------------------------------------------------------------------
   major function
